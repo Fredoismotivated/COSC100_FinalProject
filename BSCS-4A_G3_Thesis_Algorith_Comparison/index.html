@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Advanced Pathfinding Algorithm Comparator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="controls">
+        <h2>Algorithm Comparator</h2>
+    
+        <label>Grid Size</label>
+        <input type="number" id="gridSize" value="20" min="5" max="30">
+    
+        <button onclick="generateGrid()">Generate Grid</button>
+        <button onclick="addRandomObstacles()">Random Obstacles</button>
+    
+        <label>Select Algorithm</label>
+        <select id="algorithmSelect">
+            <option value="aStar">A*</option>
+            <option value="dijkstra">Dijkstra</option>
+            <option value="thetaStar">Theta*</option>
+            <option value="araStar">ARA*</option>
+            <option value="adStar">AD*</option>
+            <option value="dStarLite">D* Lite</option>
+            <option value="fieldDStar">Field D*</option>
+        </select>
+    
+        <label>Terrain Weight</label>
+        <input type="range" id="terrainWeight" min="1" max="10" value="1">
+    
+        <button onclick="runAlgorithm()">Run Algorithm</button>
+        <button onclick="batchTest()">Batch Testing (Animated)</button>
+        <button onclick="clearGrid()">Clear Grid</button>
+    
+        <h3>Performance Dashboard</h3>
+        <div id="dashboard">
+            Nodes Expanded: <span id="nodes">0</span><br>
+            Path Cost: <span id="cost">0</span><br>
+            Time (ms): <span id="time">0</span>
+        </div>
+    
+        <h3>Batch Results</h3>
+        <div id="batchResults">No batch tests run yet.</div>
+    
+        <!-- Algorithm Color Legend -->
+        <h3>Algorithm Colors</h3>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color color-astar"></div> A*
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-dijkstra"></div> Dijkstra
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-theta"></div> Theta*
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-ara"></div> ARA*
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-ad"></div> AD*
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-dlite"></div> D* Lite
+            </div>
+            <div class="legend-item">
+                <div class="legend-color color-field"></div> Field D*
+            </div>
+        </div>
+    </div>
+    
+    <div id="grid-container">
+        <canvas id="pathCanvas"></canvas>
+        <div id="grid"></div>
+    </div>
+
+<script>
+let gridSize = 20;
+let gridData = [];
+let cellElements = [];
+let start = { x: 0, y: 0 };
+let end = { x: gridSize - 1, y: gridSize - 1 };
+
+// ------------------ Grid Generation ------------------
+function generateGrid() {
+    gridSize = parseInt(document.getElementById("gridSize").value) || 20;
+    const grid = document.getElementById("grid");
+    grid.innerHTML = "";
+    grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+
+    start = { x: 0, y: 0 };
+    end = { x: gridSize - 1, y: gridSize - 1 };
+
+    gridData = [];
+    cellElements = [];
+
+    for (let y = 0; y < gridSize; y++) {
+        gridData[y] = [];
+        cellElements[y] = [];
+        for (let x = 0; x < gridSize; x++) {
+            const cell = document.createElement("div");
+            cell.classList.add("cell");
+            if (x === start.x && y === start.y) cell.classList.add("start");
+            if (x === end.x && y === end.y) cell.classList.add("end");
+
+            cell.onclick = (e) => {
+                if (e.shiftKey) setWeightedCell(cell, x, y);
+                else toggleObstacle(cell, x, y);
+            };
+
+            grid.appendChild(cell);
+            gridData[y][x] = 0;
+            cellElements[y][x] = cell;
+        }
+    }
+    resizeCanvas();
+}
+
+// ------------------ Cell Updates ------------------
+function toggleObstacle(cell, x, y) {
+    if ((x === start.x && y === start.y) || (x === end.x && y === end.y)) return;
+
+    if (gridData[y][x] === 1) {
+        gridData[y][x] = 0;
+        cell.classList.remove("obstacle");
+        delete cell.dataset.weight;
+        cell.innerText = "";
+    } else {
+        gridData[y][x] = 1;
+        cell.classList.remove("weighted");
+        cell.classList.add("obstacle");
+        delete cell.dataset.weight;
+        cell.innerText = "";
+    }
+}
+
+function setWeightedCell(cell, x, y) {
+    if ((x === start.x && y === start.y) || (x === end.x && y === end.y)) return;
+
+    const weight = parseInt(document.getElementById("terrainWeight").value);
+    gridData[y][x] = weight;
+    cell.classList.remove("obstacle");
+    cell.classList.add("weighted");
+    cell.dataset.weight = weight;
+    cell.innerText = weight;
+}
+
+// ------------------ Random Obstacles ------------------
+function addRandomObstacles(percentage = 20) {
+    for (let y = 0; y < gridSize; y++)
+        for (let x = 0; x < gridSize; x++)
+            if (gridData[y][x] === 1) {
+                gridData[y][x] = 0;
+                cellElements[y][x].classList.remove("obstacle");
+                delete cellElements[y][x].dataset.weight;
+                cellElements[y][x].innerText = "";
+            }
+
+    const totalCells = gridSize * gridSize;
+    const obstaclesCount = Math.floor((percentage / 100) * totalCells);
+    let placed = 0;
+
+    while (placed < obstaclesCount) {
+        const x = Math.floor(Math.random() * gridSize);
+        const y = Math.floor(Math.random() * gridSize);
+        if ((x === start.x && y === start.y) || (x === end.x && y === end.y)) continue;
+        if (gridData[y][x] === 0) {
+            gridData[y][x] = 1;
+            cellElements[y][x].classList.add("obstacle");
+            placed++;
+        }
+    }
+}
+
+// ------------------ Pathfinding Helpers ------------------
+function neighbors(x, y) {
+    const dirs = [[1,0], [-1,0], [0,1], [0,-1]];
+    return dirs.map(([dx, dy]) => ({ x: x+dx, y: y+dy }))
+               .filter(n => n.x >= 0 && n.y >= 0 && n.x < gridSize && n.y < gridSize && gridData[n.y][n.x] !== 1);
+}
+
+function getCellCost(x, y) {
+    if (gridData[y][x] === 1) return Infinity;
+    if (cellElements[y][x].classList.contains("weighted"))
+        return parseInt(cellElements[y][x].dataset.weight) || 1;
+    return 1;
+}
+
+function heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function reconstruct(cameFrom, current) {
+    const path = [];
+    while (current) {
+        path.push(current);
+        current = cameFrom[current.y]?.[current.x];
+    }
+    return path.reverse();
+}
+
+// ------------------ Canvas Animation ------------------
+function resizeCanvas() {
+    const canvas = document.getElementById("pathCanvas");
+    const grid = document.getElementById("grid");
+    const style = getComputedStyle(grid);
+    const gap = parseInt(style.gap) || 0;
+    canvas.width = grid.offsetWidth + gap;
+    canvas.height = grid.offsetHeight + gap;
+}
+
+async function animatePath(visited, path, pathColor='yellow', visitedColor='rgba(135,206,250,0.3)') {
+    const canvas = document.getElementById("pathCanvas");
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    const grid = document.getElementById("grid");
+    const style = getComputedStyle(grid);
+    const gap = parseInt(style.gap) || 0;
+    const cellWidth = (canvas.width - (gridSize-1)*gap) / gridSize;
+    const cellHeight = (canvas.height - (gridSize-1)*gap) / gridSize;
+
+    // Animate visited
+    for (let node of visited) {
+        if (!(node.x===start.x && node.y===start.y) && !(node.x===end.x && node.y===end.y)) {
+            ctx.fillStyle = visitedColor;
+            ctx.fillRect(node.x*(cellWidth+gap), node.y*(cellHeight+gap), cellWidth, cellHeight);
+            await new Promise(r=>setTimeout(r,5));
+        }
+    }
+
+    // Animate path
+    ctx.strokeStyle = pathColor;
+    ctx.lineWidth = Math.min(cellWidth, cellHeight)/3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i=0;i<path.length;i++){
+        const node = path[i];
+        const cx = node.x*(cellWidth+gap) + cellWidth/2;
+        const cy = node.y*(cellHeight+gap) + cellHeight/2;
+        if (i===0) ctx.moveTo(cx,cy);
+        else ctx.lineTo(cx,cy);
+        ctx.stroke();
+        await new Promise(r=>setTimeout(r,30));
+    }
+}
+
+// ------------------ A* ------------------
+async function aStar() {
+    const open=[start];
+    const cameFrom=Array(gridSize).fill().map(()=>Array(gridSize).fill(null));
+    const g=Array(gridSize).fill().map(()=>Array(gridSize).fill(Infinity));
+    g[start.y][start.x]=0;
+    const visited=[];
+
+    while(open.length){
+        open.sort((a,b)=>(g[a.y][a.x]+heuristic(a,end))-(g[b.y][b.x]+heuristic(b,end)));
+        const current = open.shift();
+        visited.push(current);
+
+        if(current.x===end.x && current.y===end.y){
+            const path=reconstruct(cameFrom,current);
+            await animatePath(visited,path,'yellow','rgba(255,255,0,0.2)');
+            return {visitedCount:visited.length, pathCost:g[end.y][end.x], path};
+        }
+
+        for(let n of neighbors(current.x,current.y)){
+            const tentative = g[current.y][current.x]+getCellCost(n.x,n.y);
+            if(tentative<g[n.y][n.x]){
+                g[n.y][n.x]=tentative;
+                cameFrom[n.y][n.x]=current;
+                if(!open.some(o=>o.x===n.x && o.y===n.y)) open.push(n);
+            }
+        }
+    }
+}
+
+// ------------------ Dijkstra ------------------
+async function dijkstra() {
+    const queue=[start];
+    const cameFrom=Array(gridSize).fill().map(()=>Array(gridSize).fill(null));
+    const dist=Array(gridSize).fill().map(()=>Array(gridSize).fill(Infinity));
+    dist[start.y][start.x]=0;
+    const visited=[];
+
+    while(queue.length){
+        queue.sort((a,b)=>dist[a.y][a.x]-dist[b.y][b.x]);
+        const current=queue.shift();
+        visited.push(current);
+
+        if(current.x===end.x && current.y===end.y){
+            const path=reconstruct(cameFrom,current);
+            await animatePath(visited,path,'violet','rgba(238,130,238,0.2)');
+            return {visitedCount:visited.length, pathCost:dist[end.y][end.x], path};
+        }
+
+        for(let n of neighbors(current.x,current.y)){
+            const alt=dist[current.y][current.x]+getCellCost(n.x,n.y);
+            if(alt<dist[n.y][n.x]){
+                dist[n.y][n.x]=alt;
+                cameFrom[n.y][n.x]=current;
+                if(!queue.some(o=>o.x===n.x && o.y===n.y)) queue.push(n);
+            }
+        }
+    }
+}
+
+// ------------------ Theta* (Any-Angle A*) ------------------
+function lineOfSight(a, b) {
+    let x0 = a.x, y0 = a.y;
+    let x1 = b.x, y1 = b.y;
+
+    let dx = Math.abs(x1 - x0);
+    let dy = Math.abs(y1 - y0);
+    let sx = (x0 < x1) ? 1 : -1;
+    let sy = (y0 < y1) ? 1 : -1;
+    let err = dx - dy;
+
+    while (true) {
+        if (gridData[y0][x0] === 1) return false;  // Check for obstacles
+        if (x0 === x1 && y0 === y1) break;
+        let e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 < dx) { err += dx; y0 += sy; }
+    }
+    return true;
+}
+
+// ------------------ Theta* (Fixed) ------------------
+async function thetaStar() {
+    const open = [start];
+    const cameFrom = Array(gridSize).fill().map(() => Array(gridSize).fill(null));
+    const g = Array(gridSize).fill().map(() => Array(gridSize).fill(Infinity));
+    g[start.y][start.x] = 0;
+    cameFrom[start.y][start.x] = start;
+    const visited = [];
+
+    while (open.length) {
+        open.sort((a, b) => (g[a.y][a.x] + heuristic(a, end)) - (g[b.y][b.x] + heuristic(b, end)));
+        const current = open.shift();
+        visited.push(current);
+
+        if (current.x === end.x && current.y === end.y) {
+            const path = reconstructTheta(cameFrom, current);
+            await animatePath(visited, path, 'cyan', 'rgba(0,255,255,0.2)');
+            return { visitedCount: visited.length, pathCost: g[end.y][end.x], path };
+        }
+
+        for (let n of neighbors(current.x, current.y)) {
+            // Check line of sight from current's parent to neighbor
+            if (cameFrom[current.y][current.x] && 
+                lineOfSight(cameFrom[current.y][current.x], n)) {
+                
+                const parent = cameFrom[current.y][current.x];
+                const tentative = g[parent.y][parent.x] + distance(parent, n);
+                
+                if (tentative < g[n.y][n.x]) {
+                    g[n.y][n.x] = tentative;
+                    cameFrom[n.y][n.x] = parent;
+                    if (!open.some(o => o.x === n.x && o.y === n.y)) open.push(n);
+                }
+            } else {
+                const tentative = g[current.y][current.x] + getCellCost(n.x, n.y);
+                
+                if (tentative < g[n.y][n.x]) {
+                    g[n.y][n.x] = tentative;
+                    cameFrom[n.y][n.x] = current;
+                    if (!open.some(o => o.x === n.x && o.y === n.y)) open.push(n);
+                }
+            }
+        }
+    }
+}
+
+function reconstructTheta(cameFrom, current) {
+    const path = [];
+    while (current) {
+        path.push(current);
+        current = cameFrom[current.y]?.[current.x];
+        // Avoid infinite loop if parent points to itself
+        if (current && path.length > 1 && path[path.length-1].x === current.x && path[path.length-1].y === current.y) break;
+    }
+    return path.reverse();
+}
+
+function distance(a, b) {
+    return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+}
+
+// ------------------ ARA* (Fixed - No Duplicate Runs) ------------------
+async function araStar() {
+    let epsilon = 2.5;
+    const open = [];
+    const closed = new Set();
+    const cameFrom = Array(gridSize).fill().map(() => Array(gridSize).fill(null));
+    const g = Array(gridSize).fill().map(() => Array(gridSize).fill(Infinity));
+    const allVisited = []; // Track ALL visited nodes across iterations
+    let bestPath = null;
+    let bestCost = Infinity;
+    
+    g[start.y][start.x] = 0;
+
+    while (epsilon >= 1) {
+        // Reset for new epsilon iteration
+        open.length = 0;
+        closed.clear();
+        
+        // Re-initialize g values for start
+        g[start.y][start.x] = 0;
+        
+        // Clear cameFrom for this iteration (but keep for path reconstruction)
+        for (let y = 0; y < gridSize; y++) {
+            for (let x = 0; x < gridSize; x++) {
+                cameFrom[y][x] = null;
+            }
+        }
+        
+        open.push({ ...start, key: g[start.y][start.x] + epsilon * heuristic(start, end) });
+        
+        const iterationVisited = []; // Track visited nodes for THIS iteration only
+        
+        while (open.length) {
+            open.sort((a, b) => a.key - b.key);
+            const current = open.shift();
+            
+            if (closed.has(`${current.x},${current.y}`)) continue;
+            
+            iterationVisited.push(current);
+            allVisited.push(current); // Add to overall visited
+            closed.add(`${current.x},${current.y}`);
+
+            if (current.x === end.x && current.y === end.y) {
+                const path = reconstruct(cameFrom, current);
+                const cost = g[end.y][end.x];
+                
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestPath = path;
+                }
+                
+                // Show intermediate result if epsilon > 1
+                if (epsilon > 1) {
+                    await animatePath(iterationVisited, path, 'lime', 'rgba(0,255,0,0.1)');
+                    await new Promise(r => setTimeout(r, 500));
+                }
+                break;
+            }
+
+            for (let n of neighbors(current.x, current.y)) {
+                if (closed.has(`${n.x},${n.y}`)) continue;
+                
+                const tentative = g[current.y][current.x] + getCellCost(n.x, n.y);
+                
+                if (tentative < g[n.y][n.x]) {
+                    g[n.y][n.x] = tentative;
+                    cameFrom[n.y][n.x] = current;
+                    
+                    const key = g[n.y][n.x] + epsilon * heuristic(n, end);
+                    if (!open.some(o => o.x === n.x && o.y === n.y)) {
+                        open.push({ ...n, key });
+                    }
+                }
+            }
+        }
+        
+        epsilon -= 0.5;
+    }
+    
+    // Final result with best path - use allVisited for the final animation
+    const finalPath = bestPath || reconstruct(cameFrom, end);
+    await animatePath(allVisited, finalPath, 'lime', 'rgba(0,255,0,0.2)');
+    return { visitedCount: allVisited.length, pathCost: bestCost, path: finalPath };
+}
+// ------------------ Simplified AD* (Anytime A* with decreasing epsilon) ------------------
+async function adStar() {
+    let epsilon = 2.5;
+    const allVisited = [];
+    let bestPath = null;
+    let bestCost = Infinity;
+    
+    while (epsilon >= 1) {
+        const open = [start];
+        const cameFrom = Array(gridSize).fill().map(() => Array(gridSize).fill(null));
+        const g = Array(gridSize).fill().map(() => Array(gridSize).fill(Infinity));
+        g[start.y][start.x] = 0;
+        const visited = [];
+        
+        while (open.length) {
+            // Sort using inflated heuristic
+            open.sort((a, b) => 
+                (g[a.y][a.x] + epsilon * heuristic(a, end)) - 
+                (g[b.y][b.x] + epsilon * heuristic(b, end))
+            );
+            
+            const current = open.shift();
+            visited.push(current);
+            allVisited.push(current);
+            
+            if (current.x === end.x && current.y === end.y) {
+                const path = reconstruct(cameFrom, current);
+                const cost = g[end.y][end.x];
+                
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestPath = path;
+                }
+                
+                // Show intermediate result
+                if (epsilon > 1) {
+                    await animatePath(visited, path, 'orange', 'rgba(255,165,0,0.1)');
+                    await new Promise(r => setTimeout(r, 500));
+                }
+                break;
+            }
+            
+            for (let n of neighbors(current.x, current.y)) {
+                const tentative = g[current.y][current.x] + getCellCost(n.x, n.y);
+                if (tentative < g[n.y][n.x]) {
+                    g[n.y][n.x] = tentative;
+                    cameFrom[n.y][n.x] = current;
+                    if (!open.some(o => o.x === n.x && o.y === n.y)) {
+                        open.push(n);
+                    }
+                }
+            }
+        }
+        
+        epsilon -= 0.5;
+    }
+    
+    // Final result with best path
+    const finalPath = bestPath || reconstruct(cameFrom, end);
+    await animatePath(allVisited, finalPath, 'orange', 'rgba(255,165,0,0.2)');
+    return { 
+        visitedCount: allVisited.length, 
+        pathCost: bestCost, 
+        path: finalPath 
+    };
+}
+// ------------------ Field D* (Fixed with proper interpolation) ------------------
+async function fieldDStar() {
+    const open = [start];
+    const cameFrom = Array(gridSize).fill().map(() => Array(gridSize).fill(null));
+    const g = Array(gridSize).fill().map(() => Array(gridSize).fill(Infinity));
+    g[start.y][start.x] = 0;
+    const visited = [];
+
+    function interpolatedCost(node, neighbor) {
+        // Get the 4 neighbors for bilinear interpolation
+        const x = node.x;
+        const y = node.y;
+        const nx = neighbor.x;
+        const ny = neighbor.y;
+        
+        // Simple linear interpolation along the edge
+        const dx = nx - x;
+        const dy = ny - y;
+        
+        if (dx !== 0 && dy !== 0) {
+            // Diagonal movement - interpolate between horizontal and vertical
+            const costH = (getCellCost(x + dx, y) + getCellCost(x, y)) / 2;
+            const costV = (getCellCost(x, y + dy) + getCellCost(x, y)) / 2;
+            return (costH + costV) / 2 * Math.sqrt(2);
+        } else {
+            // Straight movement
+            return getCellCost(nx, ny);
+        }
+    }
+
+    while (open.length) {
+        open.sort((a, b) => (g[a.y][a.x] + heuristic(a, end)) - (g[b.y][b.x] + heuristic(b, end)));
+        const current = open.shift();
+        visited.push(current);
+
+        if (current.x === end.x && current.y === end.y) {
+            const path = reconstruct(cameFrom, current);
+            await animatePath(visited, path, '#87CEFA', 'rgba(135,206,250,0.2)');
+            return { visitedCount: visited.length, pathCost: g[end.y][end.x], path };
+        }
+
+        // Check all 8 neighbors (including diagonals)
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                if (dx === 0 && dy === 0) continue;
+                
+                const nx = current.x + dx;
+                const ny = current.y + dy;
+                
+                if (nx < 0 || nx >= gridSize || ny < 0 || ny >= gridSize) continue;
+                if (gridData[ny][nx] === 1) continue; // Obstacle
+                
+                const moveCost = interpolatedCost(current, {x: nx, y: ny});
+                const tentative = g[current.y][current.x] + moveCost;
+                
+                if (tentative < g[ny][nx]) {
+                    g[ny][nx] = tentative;
+                    cameFrom[ny][nx] = current;
+                    if (!open.some(o => o.x === nx && o.y === ny)) open.push({x: nx, y: ny});
+                }
+            }
+        }
+    }
+}
+
+// Update the runAlgorithm switch to use the fixed functions
+async function runAlgorithm(){
+    resizeCanvas();
+    const algorithm = document.getElementById("algorithmSelect").value;
+    const startTime = performance.now();
+    let result;
+    
+    switch(algorithm){
+        case 'aStar': result = await aStar(); break;
+        case 'dijkstra': result = await dijkstra(); break;
+        case 'thetaStar': result = await thetaStar(); break;
+        case 'araStar': result = await araStar(); break;
+        case 'adStar': result = await adStar(); break;
+        case 'dStarLite': result = await dStarLite(); break;
+        case 'fieldDStar': result = await fieldDStar(); break;
+    }
+    
+    const endTime = performance.now();
+    document.getElementById("nodes").innerText = result?.visitedCount || 0;
+    document.getElementById("cost").innerText = result?.pathCost?.toFixed(2) || 0;
+    document.getElementById("time").innerText = `${(endTime-startTime).toFixed(2)}ms`;
+}
+// ------------------D* Lite (Simplified Educational Version)------------------
+async function dStarLite() {
+    const open=[end];
+    const cameFrom=Array(gridSize).fill().map(()=>Array(gridSize).fill(null));
+    const g=Array(gridSize).fill().map(()=>Array(gridSize).fill(Infinity));
+    g[end.y][end.x]=0;
+    const visited=[];
+
+    while(open.length){
+        open.sort((a,b)=>g[a.y][a.x]-g[b.y][b.x]);
+        const current=open.shift();
+        visited.push(current);
+
+        if(current.x===start.x && current.y===start.y){
+            const path=reconstruct(cameFrom,current).reverse();
+            await animatePath(visited,path,'red','rgba(255,0,0,0.2)');
+            return {visitedCount:visited.length,pathCost:g[start.y][start.x],path};
+        }
+
+        for(let n of neighbors(current.x,current.y)){
+            const tentative=g[current.y][current.x]+getCellCost(n.x,n.y);
+            if(tentative<g[n.y][n.x]){
+                g[n.y][n.x]=tentative;
+                cameFrom[n.y][n.x]=current;
+                if(!open.some(o=>o.x===n.x && o.y===n.y)) open.push(n);
+            }
+        }
+    }
+}
+
+// ------------------ Run Algorithm ------------------
+async function runAlgorithm(){
+    resizeCanvas();
+    const algorithm=document.getElementById("algorithmSelect").value;
+    const startTime=performance.now();
+    let result;
+    switch(algorithm){
+    case 'aStar': result=await aStar(); break;
+    case 'dijkstra': result=await dijkstra(); break;
+    case 'thetaStar': result=await thetaStar(); break;
+    case 'araStar': result=await araStar(); break;
+    case 'adStar': result=await adStar(); break;
+    case 'dStarLite': result=await dStarLite(); break;
+    case 'fieldDStar': result=await fieldDStar(); break;
+}
+    const endTime=performance.now();
+    document.getElementById("nodes").innerText=result.visitedCount;
+    document.getElementById("cost").innerText=result.pathCost;
+    document.getElementById("time").innerText=`${(endTime-startTime).toFixed(2)}ms`;
+}
+
+// ------------------ Batch Test ------------------
+async function batchTest(){
+    resizeCanvas();
+    const resultsDiv = document.getElementById("batchResults");
+    resultsDiv.innerText = "Running Animated Batch Test...";
+
+    const algorithms = ['aStar', 'dijkstra', 'thetaStar', 'araStar', 'adStar', 'dStarLite', 'fieldDStar'];
+    const results = {};
+
+    for (let algo of algorithms) {
+        const startTime = performance.now();
+        const result = await window[algo]();
+        const endTime = performance.now();
+        results[algo] = { result, time: (endTime - startTime).toFixed(2) };
+        await new Promise(r => setTimeout(r, 500)); // Delay to make animations smooth
+    }
+
+    let output = '';
+    for (let algo of algorithms) {
+        const { result, time } = results[algo];
+        output += `
+            <strong>${algo.replace(/([A-Z])/g, ' $1').toUpperCase()}:</strong><br>
+            Nodes: ${result.visitedCount}, Cost: ${result.pathCost}, Time: ${time}ms<br><br>
+        `;
+    }
+    resultsDiv.innerHTML = output;
+}
+
+// ------------------ Clear Grid ------------------
+function clearGrid() {
+    // Reset the grid data and elements
+    gridData = [];
+    cellElements = [];
+    
+    generateGrid();  // Re-generate the grid
+    const canvas = document.getElementById("pathCanvas");
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);  // Clear the canvas
+    
+    // Reset dashboard stats
+    document.getElementById("nodes").innerText = 0;
+    document.getElementById("cost").innerText = 0;
+    document.getElementById("time").innerText = 0;
+    document.getElementById("batchResults").innerText = "No batch tests run yet.";
+}
+// ------------------ Initialize ------------------
+generateGrid();
+window.addEventListener('resize', resizeCanvas);
+
+</script>
+
+</body>
+</html>

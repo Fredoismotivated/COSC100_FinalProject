@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>A* vs Dijkstra</title>
+  <style>
+    body {
+      font-family: Arial;
+      display: flex;
+      gap: 40px;
+    }
+    .container {
+      text-align: center;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(20, 25px);
+      grid-template-rows: repeat(20, 25px);
+    }
+    .cell {
+      width: 25px;
+      height: 25px;
+      border: 1px solid #ddd;
+    }
+    .start { background: green; }
+    .end { background: red; }
+    .wall { background: black; }
+    .visited { background: #87CEFA; }
+    .path { background: yellow; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>A*</h2>
+  <div id="gridA" class="grid"></div>
+</div>
+
+<div class="container">
+  <h2>Dijkstra</h2>
+  <div id="gridD" class="grid"></div>
+</div>
+
+<script>
+const size = 20;
+const start = {x: 0, y: 0};
+const end = {x: 19, y: 19};
+
+// Generate ONE obstacle map used by both algorithms
+const walls = [];
+for (let y = 0; y < size; y++) {
+  walls[y] = [];
+  for (let x = 0; x < size; x++) {
+    walls[y][x] = Math.random() < 0.25 && !(x===0&&y===0) && !(x===19&&y===19);
+  }
+}
+
+function createGrid(id) {
+  const grid = [];
+  const container = document.getElementById(id);
+  container.innerHTML = "";
+
+  for (let y = 0; y < size; y++) {
+    grid[y] = [];
+    for (let x = 0; x < size; x++) {
+      const cell = document.createElement("div");
+      cell.classList.add("cell");
+
+      if (x===start.x && y===start.y) cell.classList.add("start");
+      if (x===end.x && y===end.y) cell.classList.add("end");
+      if (walls[y][x]) cell.classList.add("wall");
+
+      container.appendChild(cell);
+      grid[y][x] = cell;
+    }
+  }
+  return grid;
+}
+
+function neighbors(x,y) {
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  return dirs
+    .map(([dx,dy])=>({x:x+dx,y:y+dy}))
+    .filter(n=>n.x>=0 && n.y>=0 && n.x<size && n.y<size && !walls[n.y][n.x]);
+}
+
+function heuristic(a,b){
+  return Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+}
+
+function reconstruct(cameFrom, current){
+  const path = [];
+  while(current){
+    path.push(current);
+    current = cameFrom[current.y]?.[current.x];
+  }
+  return path.reverse();
+}
+
+async function animate(grid, visited, path){
+  for(let node of visited){
+    if(!(node.x===0&&node.y===0) && !(node.x===19&&node.y===19)){
+      grid[node.y][node.x].classList.add("visited");
+    }
+    await new Promise(r=>setTimeout(r,5));
+  }
+  for(let node of path){
+    if(!(node.x===0&&node.y===0) && !(node.x===19&&node.y===19)){
+      grid[node.y][node.x].classList.remove("visited");
+      grid[node.y][node.x].classList.add("path");
+    }
+    await new Promise(r=>setTimeout(r,30));
+  }
+}
+
+async function aStar(grid){
+  const open = [start];
+  const cameFrom = Array(size).fill().map(()=>Array(size).fill(null));
+  const g = Array(size).fill().map(()=>Array(size).fill(Infinity));
+  g[start.y][start.x] = 0;
+
+  const visited = [];
+
+  while(open.length){
+    open.sort((a,b)=>
+      (g[a.y][a.x]+heuristic(a,end))-
+      (g[b.y][b.x]+heuristic(b,end))
+    );
+    const current = open.shift();
+    visited.push(current);
+
+    if(current.x===end.x && current.y===end.y){
+      const path = reconstruct(cameFrom,current);
+      return animate(grid,visited,path);
+    }
+
+    for(let n of neighbors(current.x,current.y)){
+      const tentative = g[current.y][current.x]+1;
+      if(tentative < g[n.y][n.x]){
+        g[n.y][n.x] = tentative;
+        cameFrom[n.y][n.x] = current;
+        if(!open.some(o=>o.x===n.x&&o.y===n.y)){
+          open.push(n);
+        }
+      }
+    }
+  }
+}
+
+async function dijkstra(grid){
+  const queue = [start];
+  const cameFrom = Array(size).fill().map(()=>Array(size).fill(null));
+  const dist = Array(size).fill().map(()=>Array(size).fill(Infinity));
+  dist[start.y][start.x] = 0;
+
+  const visited = [];
+
+  while(queue.length){
+    queue.sort((a,b)=>dist[a.y][a.x]-dist[b.y][b.x]);
+    const current = queue.shift();
+    visited.push(current);
+
+    if(current.x===end.x && current.y===end.y){
+      const path = reconstruct(cameFrom,current);
+      return animate(grid,visited,path);
+    }
+
+    for(let n of neighbors(current.x,current.y)){
+      const alt = dist[current.y][current.x]+1;
+      if(alt < dist[n.y][n.x]){
+        dist[n.y][n.x] = alt;
+        cameFrom[n.y][n.x] = current;
+        if(!queue.some(o=>o.x===n.x&&o.y===n.y)){
+          queue.push(n);
+        }
+      }
+    }
+  }
+}
+
+async function run(){
+  const gridA = createGrid("gridA");
+  const gridD = createGrid("gridD");
+  await Promise.all([
+    aStar(gridA),
+    dijkstra(gridD)
+  ]);
+}
+
+run();
+</script>
+
+</body>
+</html>
